@@ -1,0 +1,28 @@
+# Virtual environment
+.venv/
+ENV/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints
+
+# Databases & Runtime persistence
+*.db
+*.db-journal
+*.sqlite
+
+# Testing cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE files & Operating system
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
