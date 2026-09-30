@@ -1,147 +1,200 @@
-# Autonomous Agent Swarm Coordinator 🛠️
+# Autonomous Agent Swarm
 
-A thread-safe, event-driven framework for configuring, coordinating, and evaluating specialized worker agents. Integrates seamlessly with **CrewAI**, **LangChain**, and **LlamaIndex** to build reliable agentic workflows.
+> Event-driven orchestration primitives for coordinating specialized AI workers with queues, DAG workflows, persistent state, evaluation, human approval, and crash recovery.
 
----
+**Acadify Solution** maintains this repository as a reference implementation for building controlled, observable agentic systems.
 
-## Key Features
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](requirements.txt)
+[![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC.svg)](tests/)
+[![CodeQL](https://github.com/AcadifySolution/autonomous-agent-swarm/actions/workflows/codeql.yml/badge.svg)](https://github.com/AcadifySolution/autonomous-agent-swarm/actions/workflows/codeql.yml)
 
-- 📢 **Event-Driven Communication**: A thread-safe, publish-subscribe `EventBroker` executing callbacks asynchronously via a thread pool.
-- 🗂️ **Priority Routing Queue**: A thread-safe `TaskQueue` supporting priority ordering and role-specific dequeue filtering.
-- 💾 **Thread-Safe State Persistence**: SQLite-backed `StateStore` keeping track of agent status, task logs, and evaluation reports safely under multi-threaded concurrency.
-- 🧩 **Multi-Framework Support**: Modular agent wrappers wrapping CrewAI (`CrewAgentWrapper`), LangChain (`LangChainAgentWrapper`), and LlamaIndex (`LlamaIndexAgentWrapper`).
-- 🧼 **Output Sanitization**: Dynamic parsing utility `OutputSanitizer` to extract JSON from raw LLM responses and validate fields using **Pydantic** models.
-- 📊 **Worker Evaluation Pipeline**: Performance measurement (`WorkerEvaluator`) scoring agents on latency and Pydantic schema compliance, logging audit metrics directly.
-- 🔗 **DAG-Based Workflow Coordination**: Coordinate complex dependencies (`WorkflowCoordinator`) with cycle detection and cascade cancellations.
-- 🛑 **Human-in-the-Loop (HITL)**: Built-in `HITLGate` for pausing task execution until manual approval/rejection.
-- 🛡️ **Crash Recovery Watchdog**: Background `SwarmWatchdog` daemon that detects dead agents and recovers their running tasks.
+## What is included
 
----
+| Capability | Implementation |
+| --- | --- |
+| Agent runtime | Threaded worker lifecycle, heartbeats, bounded retries |
+| Messaging | Thread-safe publish/subscribe event broker |
+| Queueing | Priority queue with worker-role routing |
+| State | SQLite-backed task, agent, and evaluation persistence |
+| Workflows | DAG dependencies with cycle detection and cascade handling |
+| Human control | Approval/rejection gates for gated tasks |
+| Recovery | Watchdog detection and orphaned-task recovery |
+| Output safety | JSON extraction and Pydantic validation |
+| Evaluation | Latency and output/schema compliance metrics |
+| Framework adapters | CrewAI, LangChain, and LlamaIndex wrappers |
+| Guardrails | Retry, payload, task-size, priority, and workflow bounds |
+| Auditability | Correlation-aware structured audit events |
 
-## Architectural Flow
+## Architecture
 
 ```mermaid
-graph TD
-    User([User / System Task]) -->|Submit| TaskQueue[Task Queue]
-    TaskQueue -->|Poll by Role| AgentThread[Agent Executor Thread]
-    AgentThread -->|Read Task| Agent[SwarmAgent]
-    Agent -->|Execute via| Wrapper[CrewAI / LangChain / LlamaIndex]
-    Wrapper -->|Return Raw Output| Sanitizer[OutputSanitizer]
-    Sanitizer -->|Sanitized JSON| Evaluator[WorkerEvaluator]
-    Evaluator -->|Report / Result| StateStore[(SQLite State Store)]
-    Evaluator -->|Publish Event| EventBroker[Event Broker]
-    EventBroker -->|Notify Subscribed Agents| TaskQueue
+flowchart LR
+    Client[Task Producer] --> Queue[Priority Task Queue]
+    Queue --> Worker[Swarm Agent]
+    Worker --> Adapter[CrewAI / LangChain / LlamaIndex]
+    Adapter --> Sanitizer[Output Sanitizer]
+    Sanitizer --> Evaluator[Worker Evaluator]
+    Evaluator --> State[(State Store)]
+    Worker --> Broker[Event Broker]
+    Broker --> Workflow[Workflow Coordinator]
+    Workflow --> Queue
+    HITL[Human Approval] --> Workflow
+    Watchdog[Watchdog] --> State
+    Watchdog --> Queue
+    Audit[Audit Events] --> Logs[Application Logs]
+    Worker --> Audit
 ```
 
----
+## Runtime model
 
-## Schema Overview
+A task can move through the following lifecycle:
 
-### Agents Table
-Stores active/inactive agent statuses.
-- `agent_id` (Primary Key)
-- `name`
-- `role`
-- `status` (`IDLE`, `BUSY`, `CRASHED`, `OFFLINE`)
-- `last_active` (Timestamp)
-- `last_heartbeat` (Timestamp)
-- `assigned_task_id` (String, Optional)
-
-### Tasks Table
-Maintains absolute execution logs of all tasks.
-- `task_id` (Primary Key)
-- `name`
-- `description`
-- `worker_type`
-- `priority` (Integer)
-- `status` (`PENDING`, `PENDING_APPROVAL`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`)
-- `payload` (JSON)
-- `result` (JSON, Optional)
-- `error` (String, Optional)
-- `correlation_id` (String)
-- `max_retries` (Integer)
-- `current_retry` (Integer)
-- `parent_task_ids` (JSON Array)
-- `workflow_id` (String, Optional)
-
-### Evaluations Table
-Logs audit metrics for agent performance auditing.
-- `eval_id` (Primary Key)
-- `task_id` (Foreign Key)
-- `agent_id` (Foreign Key)
-- `latency` (Float)
-- `compliance` (Boolean)
-- `score` (Float, 1.0 to 5.0)
-- `metrics_payload` (JSON)
-
----
-
-## Directory Structure
-
-```
-├── swarm/
-│   ├── __init__.py
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── event.py          # Event schemas & types
-│   │   ├── broker.py         # Thread-safe Pub/Sub broker
-│   │   ├── queue.py          # Priority-based thread-safe task queue
-│   │   ├── state.py          # SQLite persistence storage
-│   │   ├── agent.py          # Base agent class & SDK wrappers
-│   │   ├── workflow.py       # DAG-based workflow coordination
-│   │   ├── hitl.py           # Human-in-the-loop approval gates
-│   │   └── watchdog.py       # Background daemon for crash recovery
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   └── sanitizer.py      # JSON extraction & Pydantic validation
-│   └── evaluation/
-│       ├── __init__.py
-│       └── evaluator.py      # Metrics tracker & latency analyzer
-├── tests/
-│   ├── __init__.py
-│   ├── test_broker.py
-│   ├── test_queue.py
-│   ├── test_state.py
-│   ├── test_sanitizer.py
-│   ├── test_agent.py
-│   ├── test_workflow.py
-│   ├── test_hitl.py
-│   └── test_watchdog.py
-├── examples/
-│   ├── __init__.py
-│   └── demo_swarm.py         # Runnable example orchestration
-├── requirements.txt
-└── README.md
+```text
+PENDING
+   |
+   +-- approval required --> PENDING_APPROVAL --> PENDING
+   |
+   v
+RUNNING
+   +-- success -----------> COMPLETED
+   +-- failure
+        +-- retries remain -> PENDING
+        +-- exhausted -----> FAILED
 ```
 
----
+Workflow dependencies keep downstream tasks blocked until their required parents complete. A watchdog can recover tasks left in `RUNNING` when an agent stops sending heartbeats.
 
-## Setup & Running Guide
+## Project structure
 
-### 1. Requirements
+```text
+swarm/
+├── core/
+│   ├── agent.py        # Worker lifecycle + framework wrappers
+│   ├── broker.py       # Event pub/sub
+│   ├── event.py        # Event contracts
+│   ├── hitl.py         # Human approval gates
+│   ├── limits.py       # Runtime guardrails
+│   ├── audit.py        # Structured audit events
+│   ├── queue.py        # Priority task queue
+│   ├── state.py        # SQLite persistence
+│   ├── watchdog.py     # Crash/recovery monitoring
+│   └── workflow.py     # DAG orchestration
+├── evaluation/
+│   └── evaluator.py    # Execution quality metrics
+└── utils/
+    └── sanitizer.py    # LLM output parsing/validation
 
-Make sure you have Python 3.10+ installed.
+tests/                  # Regression and concurrency coverage
+examples/               # Runnable demo
+docs/                   # API and architecture documentation
+RUNTIME_GUARDRAILS.md   # Runtime safety guidance
+SECURITY.md             # Security baseline
+CONTRIBUTING.md         # Development workflow
+```
 
-### 2. Environment Setup
+## Quick start
 
-Create a virtual environment and install requirements:
+### Requirements
+
+Python 3.10+ and a virtual environment.
+
+### Install
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3. Running Automated Tests
+### Run tests
 
-Run the full testing suite:
 ```bash
-pytest tests/
+pytest -q
 ```
 
-### 4. Running the Demo Swarm Coordinator
+### Run the demo
 
-Run the demo showing CrewAI and LangChain agents coordinating in a workflow (Research -> Summarize -> Evaluate) with mock LLMs (no API keys required):
 ```bash
-python3 -m examples.demo_swarm
+python -m examples.demo_swarm
 ```
+
+The example uses mock-style execution paths and does not require production model credentials.
+
+## Guardrails
+
+Autonomous execution needs hard boundaries. The repository publishes explicit defaults in `swarm/core/limits.py`:
+
+| Guardrail | Default |
+| --- | ---: |
+| Max retries | 5 |
+| Max task description | 20,000 chars |
+| Max serialized payload | 1 MB |
+| Max workflow steps | 100 |
+| Max priority | 100 |
+| Recommended worker concurrency ceiling | 32 |
+
+See [RUNTIME_GUARDRAILS.md](RUNTIME_GUARDRAILS.md).
+
+These are library defaults, not a complete authorization system. Embedding applications should apply stricter limits based on task risk and business requirements.
+
+## Safety model
+
+The framework provides primitives for control, but callers remain responsible for policy enforcement.
+
+Treat as untrusted input:
+
+- model output
+- tool output
+- external events
+- task payloads
+- workflow-provided data
+
+For high-impact actions, place an explicit authorization boundary and use a HITL gate before the side effect. Do not connect the swarm directly to destructive or irreversible tools without application-level authorization.
+
+For deployment guidance, see [SECURITY.md](SECURITY.md).
+
+## Evaluation
+
+The included evaluator measures operational and output-level signals such as:
+
+- execution latency
+- output/schema compliance
+- retry/failure behavior
+- task-level evaluation records
+
+For agentic systems, evaluate safety and reliability separately from task success. Recommended production signals include policy blocks, approval rate, retry rate, watchdog recoveries, tool failures, queue latency, and cost/token usage.
+
+## Framework adapters
+
+The core runtime is intentionally separated from external agent frameworks. Wrappers are provided for:
+
+- CrewAI
+- LangChain
+- LlamaIndex
+
+This keeps queueing, state, workflow coordination, evaluation, and recovery independent from the model/agent framework.
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [API](docs/api.md)
+- [Runtime Guardrails](RUNTIME_GUARDRAILS.md)
+- [Security](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+
+## Development quality gate
+
+Every change should pass:
+
+```bash
+ruff check .
+black --check .
+pytest -q
+```
+
+GitHub Actions also runs Python compilation and CodeQL analysis.
+
+## License
+
+No license file is added by default. Without an explicit license, the repository remains subject to applicable copyright law.
