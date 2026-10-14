@@ -2,9 +2,11 @@ import json
 import sqlite3
 import threading
 import time
-from typing import Dict, Any, List, Optional
-from swarm.core.queue import Task
+from typing import Any
+
 from swarm.core.event import SwarmEvent
+from swarm.core.queue import Task
+
 
 class StateStore:
     def __init__(self, db_path: str = "swarm.db"):
@@ -23,7 +25,7 @@ class StateStore:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            
+
             # Create agents table with heartbeats and assigned task tracking
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS agents (
@@ -36,7 +38,7 @@ class StateStore:
                     assigned_task_id TEXT
                 )
             """)
-            
+
             # Create tasks table supporting retries, DAG relationships, and workflows
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -44,6 +46,7 @@ class StateStore:
                     name TEXT NOT NULL,
                     description TEXT NOT NULL,
                     worker_type TEXT NOT NULL,
+                    priority INTEGER NOT NULL DEFAULT 10,
                     status TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     result TEXT,
@@ -57,7 +60,13 @@ class StateStore:
                     workflow_id TEXT
                 )
             """)
-            
+
+            columns = {row[1] for row in cursor.execute("PRAGMA table_info(tasks)")}
+            if "priority" not in columns:
+                cursor.execute(
+                    "ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 10"
+                )
+
             # Create evaluations table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS evaluations (
@@ -73,7 +82,7 @@ class StateStore:
                     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
                 )
             """)
-            
+
             # Create swarm_events audit table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS swarm_events (
@@ -85,16 +94,24 @@ class StateStore:
                     correlation_id TEXT
                 )
             """)
-            
+
             conn.commit()
 
-    def save_agent(self, agent_id: str, name: str, role: str, status: str, assigned_task_id: Optional[str] = None) -> None:
+    def save_agent(
+        self,
+        agent_id: str,
+        name: str,
+        role: str,
+        status: str,
+        assigned_task_id: str | None = None,
+    ) -> None:
         """Persist or update an agent's state."""
         now = time.time()
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO agents (agent_id, name, role, status, last_active, last_heartbeat, assigned_task_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_id) DO UPDATE SET
@@ -103,42 +120,58 @@ class StateStore:
                     status = excluded.status,
                     last_active = excluded.last_active,
                     last_heartbeat = excluded.last_heartbeat,
-                    assigned_task_id = COALESCE(excluded.assigned_task_id, agents.assigned_task_id)
-            """, (agent_id, name, role, status, now, now, assigned_task_id))
+                    assigned_task_id = excluded.assigned_task_id
+            """,
+                (agent_id, name, role, status, now, now, assigned_task_id),
+            )
             conn.commit()
 
-    def record_heartbeat(self, agent_id: str, status: Optional[str] = None, assigned_task_id: Optional[str] = None) -> None:
+    def record_heartbeat(
+        self,
+        agent_id: str,
+        status: str | None = None,
+        assigned_task_id: str | None = None,
+    ) -> None:
         """Record an agent heartbeat, updating status or currently assigned task."""
         now = time.time()
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            
+
             if status is not None and assigned_task_id is not None:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE agents SET 
                         last_heartbeat = ?, 
                         status = ?, 
                         assigned_task_id = ?
                     WHERE agent_id = ?
-                """, (now, status, assigned_task_id, agent_id))
+                """,
+                    (now, status, assigned_task_id, agent_id),
+                )
             elif status is not None:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE agents SET 
                         last_heartbeat = ?, 
                         status = ?
                     WHERE agent_id = ?
-                """, (now, status, agent_id))
+                """,
+                    (now, status, agent_id),
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE agents SET 
                         last_heartbeat = ?
                     WHERE agent_id = ?
-                """, (now, agent_id))
-                
+                """,
+                    (now, agent_id),
+                )
+
             conn.commit()
 
-    def get_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
+    def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         """Retrieve agent state."""
         with self._lock:
             conn = self._get_connection()
@@ -147,7 +180,7 @@ class StateStore:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_all_agents(self) -> List[Dict[str, Any]]:
+    def get_all_agents(self) -> list[dict[str, Any]]:
         """Retrieve states for all agents."""
         with self._lock:
             conn = self._get_connection()
@@ -156,17 +189,22 @@ class StateStore:
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 
-    def get_crashed_agents(self, heartbeat_threshold_seconds: float) -> List[Dict[str, Any]]:
+    def get_crashed_agents(
+        self, heartbeat_threshold_seconds: float
+    ) -> list[dict[str, Any]]:
         """Find agents that haven't sent a heartbeat within the threshold and are not OFFLINE."""
         now = time.time()
         cutoff = now - heartbeat_threshold_seconds
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM agents 
-                WHERE last_heartbeat < ? AND status != 'OFFLINE'
-            """, (cutoff,))
+                WHERE last_heartbeat < ? AND status NOT IN ('OFFLINE', 'CRASHED')
+            """,
+                (cutoff,),
+            )
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 
@@ -174,39 +212,55 @@ class StateStore:
         self,
         task: Task,
         status: str,
-        result: Optional[Dict[str, Any]] = None,
-        error: Optional[str] = None,
-        current_retry: Optional[int] = None,
-        max_retries: Optional[int] = None,
-        parent_task_ids: Optional[List[str]] = None,
-        workflow_id: Optional[str] = None
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        current_retry: int | None = None,
+        max_retries: int | None = None,
+        parent_task_ids: list[str] | None = None,
+        workflow_id: str | None = None,
     ) -> None:
         """Persist or update a task's state with full retry and workflow parameters."""
         now = time.time()
         payload_str = json.dumps(task.payload)
         result_str = json.dumps(result) if result is not None else None
-        
+
         # Pull parent IDs and retries from task object or custom arguments
-        parents_str = json.dumps(parent_task_ids) if parent_task_ids is not None else getattr(task, 'parent_task_ids', None)
+        parents_str = (
+            json.dumps(parent_task_ids)
+            if parent_task_ids is not None
+            else getattr(task, "parent_task_ids", None)
+        )
         if isinstance(parents_str, list):
             parents_str = json.dumps(parents_str)
-            
-        m_retries = max_retries if max_retries is not None else getattr(task, 'max_retries', 3)
-        c_retry = current_retry if current_retry is not None else getattr(task, 'current_retry', 0)
-        wf_id = workflow_id if workflow_id is not None else getattr(task, 'workflow_id', None)
-        
+
+        m_retries = (
+            max_retries if max_retries is not None else getattr(task, "max_retries", 3)
+        )
+        c_retry = (
+            current_retry
+            if current_retry is not None
+            else getattr(task, "current_retry", 0)
+        )
+        wf_id = (
+            workflow_id
+            if workflow_id is not None
+            else getattr(task, "workflow_id", None)
+        )
+
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO tasks (
                     task_id, name, description, worker_type, status, payload, 
                     result, error, correlation_id, created_at, updated_at, 
-                    max_retries, current_retry, parent_task_ids, workflow_id
+                    max_retries, current_retry, parent_task_ids, workflow_id, priority
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
                     status = excluded.status,
+                    priority = excluded.priority,
                     result = COALESCE(excluded.result, tasks.result),
                     error = COALESCE(excluded.error, tasks.error),
                     current_retry = COALESCE(excluded.current_retry, tasks.current_retry),
@@ -214,14 +268,29 @@ class StateStore:
                     parent_task_ids = COALESCE(excluded.parent_task_ids, tasks.parent_task_ids),
                     workflow_id = COALESCE(excluded.workflow_id, tasks.workflow_id),
                     updated_at = excluded.updated_at
-            """, (
-                task.task_id, task.name, task.description, task.worker_type, status, payload_str,
-                result_str, error, task.correlation_id, task.created_at, now,
-                m_retries, c_retry, parents_str, wf_id
-            ))
+            """,
+                (
+                    task.task_id,
+                    task.name,
+                    task.description,
+                    task.worker_type,
+                    status,
+                    payload_str,
+                    result_str,
+                    error,
+                    task.correlation_id,
+                    task.created_at,
+                    now,
+                    m_retries,
+                    c_retry,
+                    parents_str,
+                    wf_id,
+                    task.priority,
+                ),
+            )
             conn.commit()
 
-    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
         """Retrieve task state."""
         with self._lock:
             conn = self._get_connection()
@@ -232,49 +301,77 @@ class StateStore:
                 res = dict(row)
                 res["payload"] = json.loads(res["payload"])
                 res["result"] = json.loads(res["result"]) if res["result"] else None
-                res["parent_task_ids"] = json.loads(res["parent_task_ids"]) if res["parent_task_ids"] else []
+                res["parent_task_ids"] = (
+                    json.loads(res["parent_task_ids"]) if res["parent_task_ids"] else []
+                )
                 return res
             return None
 
-    def get_workflow_tasks(self, workflow_id: str) -> List[Dict[str, Any]]:
+    def get_workflow_tasks(self, workflow_id: str) -> list[dict[str, Any]]:
         """Retrieve all tasks grouped under a specific workflow."""
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM tasks WHERE workflow_id = ?", (workflow_id,))
             rows = cursor.fetchall()
-            
+
             results = []
             for r in rows:
                 res = dict(r)
                 res["payload"] = json.loads(res["payload"])
                 res["result"] = json.loads(res["result"]) if res["result"] else None
-                res["parent_task_ids"] = json.loads(res["parent_task_ids"]) if res["parent_task_ids"] else []
+                res["parent_task_ids"] = (
+                    json.loads(res["parent_task_ids"]) if res["parent_task_ids"] else []
+                )
                 results.append(res)
             return results
 
-    def save_evaluation(self, eval_id: str, task_id: str, agent_id: str, latency: float, compliance: bool, score: float, metrics_payload: Dict[str, Any]) -> None:
+    def save_evaluation(
+        self,
+        eval_id: str,
+        task_id: str,
+        agent_id: str,
+        latency: float,
+        compliance: bool,
+        score: float,
+        metrics_payload: dict[str, Any],
+    ) -> None:
         """Persist an evaluation record."""
         metrics_str = json.dumps(metrics_payload)
         compliance_int = 1 if compliance else 0
-        
+
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO evaluations (eval_id, task_id, agent_id, latency, compliance, score, metrics_payload, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (eval_id, task_id, agent_id, latency, compliance_int, score, metrics_str, time.time()))
+            """,
+                (
+                    eval_id,
+                    task_id,
+                    agent_id,
+                    latency,
+                    compliance_int,
+                    score,
+                    metrics_str,
+                    time.time(),
+                ),
+            )
             conn.commit()
 
-    def get_agent_evaluations(self, agent_id: str) -> List[Dict[str, Any]]:
+    def get_agent_evaluations(self, agent_id: str) -> list[dict[str, Any]]:
         """Retrieve evaluations for a specific agent."""
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM evaluations WHERE agent_id = ? ORDER BY timestamp DESC", (agent_id,))
+            cursor.execute(
+                "SELECT * FROM evaluations WHERE agent_id = ? ORDER BY timestamp DESC",
+                (agent_id,),
+            )
             rows = cursor.fetchall()
-            
+
             results = []
             for r in rows:
                 d = dict(r)
@@ -289,23 +386,36 @@ class StateStore:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO swarm_events (event_id, event_type, timestamp, sender_id, payload, correlation_id)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (event.event_id, event.event_type.value, event.timestamp, event.sender_id, payload_str, event.correlation_id))
+            """,
+                (
+                    event.event_id,
+                    event.event_type.value,
+                    event.timestamp,
+                    event.sender_id,
+                    payload_str,
+                    event.correlation_id,
+                ),
+            )
             conn.commit()
 
-    def get_all_events(self, correlation_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_all_events(self, correlation_id: str | None = None) -> list[dict[str, Any]]:
         """Retrieve all audit events, optionally filtered by correlation_id."""
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             if correlation_id:
-                cursor.execute("SELECT * FROM swarm_events WHERE correlation_id = ? ORDER BY timestamp ASC", (correlation_id,))
+                cursor.execute(
+                    "SELECT * FROM swarm_events WHERE correlation_id = ? ORDER BY timestamp ASC",
+                    (correlation_id,),
+                )
             else:
                 cursor.execute("SELECT * FROM swarm_events ORDER BY timestamp ASC")
             rows = cursor.fetchall()
-            
+
             results = []
             for r in rows:
                 d = dict(r)

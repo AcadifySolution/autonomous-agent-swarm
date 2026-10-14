@@ -1,13 +1,16 @@
-import uuid
-import time
 import logging
-from typing import Dict, Any, Optional, Type
+import time
+import uuid
+from typing import Any
+
 from pydantic import BaseModel
+
 from swarm.core.queue import Task
 from swarm.core.state import StateStore
 from swarm.utils.sanitizer import OutputSanitizer
 
 logger = logging.getLogger(__name__)
+
 
 class WorkerEvaluator:
     def __init__(self, state_store: StateStore):
@@ -19,8 +22,8 @@ class WorkerEvaluator:
         agent_id: str,
         raw_output: str,
         duration: float,
-        schema_class: Optional[Type[BaseModel]] = None
-    ) -> Dict[str, Any]:
+        schema_class: type[BaseModel] | None = None,
+    ) -> dict[str, Any]:
         """
         Evaluate agent execution of a task.
         Computes latency, checks Pydantic schema compliance, and logs metrics.
@@ -29,12 +32,12 @@ class WorkerEvaluator:
         compliance = True
         error_msg = None
         score = 5.0  # Default scale 1-5
-        
+
         # Check Pydantic schema compliance if schema is provided
         if schema_class is not None:
             try:
                 OutputSanitizer.sanitize_and_validate(raw_output, schema_class)
-            except Exception as e:
+            except (ValueError, TypeError) as e:
                 compliance = False
                 score = 1.0  # Lowest score for compliance failure
                 error_msg = str(e)
@@ -49,7 +52,7 @@ class WorkerEvaluator:
         metrics_payload = {
             "error_msg": error_msg,
             "raw_output_length": len(raw_output),
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
 
         # Save evaluation record
@@ -60,9 +63,9 @@ class WorkerEvaluator:
             latency=duration,
             compliance=compliance,
             score=score,
-            metrics_payload=metrics_payload
+            metrics_payload=metrics_payload,
         )
-        
+
         return {
             "eval_id": eval_id,
             "task_id": task.task_id,
@@ -70,5 +73,5 @@ class WorkerEvaluator:
             "latency": duration,
             "compliance": compliance,
             "score": score,
-            "metrics_payload": metrics_payload
+            "metrics_payload": metrics_payload,
         }

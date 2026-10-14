@@ -31,7 +31,9 @@ def validate_task_limits(
     if len(description) > limits.max_description_chars:
         raise ValueError("Task description exceeds the configured size limit.")
     if max_retries < 0 or max_retries > limits.max_task_retries:
-        raise ValueError(f"max_retries must be between 0 and {limits.max_task_retries}.")
+        raise ValueError(
+            f"max_retries must be between 0 and {limits.max_task_retries}."
+        )
     if priority < 0 or priority > limits.max_priority:
         raise ValueError(f"priority must be between 0 and {limits.max_priority}.")
     if len(str(payload).encode("utf-8")) > limits.max_payload_bytes:
