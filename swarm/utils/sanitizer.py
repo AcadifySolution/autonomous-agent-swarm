@@ -1,14 +1,16 @@
-import re
 import json
 import logging
-from typing import Any, Dict, Optional, Type
+import re
+from typing import Any
+
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
 
+
 class OutputSanitizer:
     @staticmethod
-    def sanitize_json(text: str) -> Dict[str, Any]:
+    def sanitize_json(text: str) -> dict[str, Any]:
         """
         Extract JSON structure from a raw string text.
         Handles markdown blocks like ```json ... ``` or raw json.
@@ -17,11 +19,11 @@ class OutputSanitizer:
             raise ValueError("Empty input string")
 
         cleaned = text.strip()
-        
+
         # Regex to match ```json ... ``` or ``` ... ```
         pattern = r"```(?:json)?\s*(\{.*?\})\s*```"
         match = re.search(pattern, cleaned, re.DOTALL)
-        
+
         if match:
             json_str = match.group(1)
         else:
@@ -29,7 +31,7 @@ class OutputSanitizer:
             start = cleaned.find("{")
             end = cleaned.rfind("}")
             if start != -1 and end != -1 and end > start:
-                json_str = cleaned[start:end+1]
+                json_str = cleaned[start : end + 1]
             else:
                 json_str = cleaned
 
@@ -46,11 +48,13 @@ class OutputSanitizer:
                 # (Caution: handles simple cases, could fail if text contains apostrophes)
                 fixed_str = json_str.replace("'", '"')
                 return json.loads(fixed_str)
-            except Exception:
+            except json.JSONDecodeError:
                 raise ValueError(f"Failed to parse text as JSON. Original error: {e}")
 
     @staticmethod
-    def validate_schema(data: Dict[str, Any], schema_class: Type[BaseModel]) -> BaseModel:
+    def validate_schema(
+        data: dict[str, Any], schema_class: type[BaseModel]
+    ) -> BaseModel:
         """
         Validate a dictionary against a Pydantic schema class.
         Returns the validated Pydantic model instance.
@@ -58,11 +62,15 @@ class OutputSanitizer:
         try:
             return schema_class.model_validate(data)
         except ValidationError as e:
-            logger.warning(f"Schema validation failed for schema {schema_class.__name__}: {e}")
+            logger.warning(
+                f"Schema validation failed for schema {schema_class.__name__}: {e}"
+            )
             raise ValueError(f"Schema validation failed: {e}")
 
     @classmethod
-    def sanitize_and_validate(cls, text: str, schema_class: Type[BaseModel]) -> BaseModel:
+    def sanitize_and_validate(
+        cls, text: str, schema_class: type[BaseModel]
+    ) -> BaseModel:
         """Helper method to clean and validate output in a single call."""
         parsed_dict = cls.sanitize_json(text)
         return cls.validate_schema(parsed_dict, schema_class)

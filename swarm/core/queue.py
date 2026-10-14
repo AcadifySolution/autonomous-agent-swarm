@@ -1,8 +1,10 @@
 import heapq
-import time
 import threading
-from typing import Dict, List, Optional, Any
+import time
+from typing import Any
+
 from pydantic import BaseModel, Field
+
 
 class Task(BaseModel):
     task_id: str
@@ -10,16 +12,16 @@ class Task(BaseModel):
     description: str
     worker_type: str
     priority: int = 10  # Lower number means higher priority (e.g. 0 is highest)
-    payload: Dict[str, Any] = Field(default_factory=dict)
-    correlation_id: Optional[str] = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    correlation_id: str | None = None
     created_at: float = Field(default_factory=time.time)
-    
+
     # Industrial upgrades
     available_at: float = Field(default_factory=time.time)
     max_retries: int = 3
     current_retry: int = 0
-    parent_task_ids: List[str] = Field(default_factory=list)
-    workflow_id: Optional[str] = None
+    parent_task_ids: list[str] = Field(default_factory=list)
+    workflow_id: str | None = None
 
     # For heapq comparison, sort primarily by priority, then by created_at timestamp
     def __lt__(self, other: "Task") -> bool:
@@ -27,9 +29,10 @@ class Task(BaseModel):
             return self.created_at < other.created_at
         return self.priority < other.priority
 
+
 class TaskQueue:
     def __init__(self):
-        self._tasks: List[Task] = []
+        self._tasks: list[Task] = []
         self._lock = threading.Lock()
         self._condition = threading.Condition(self._lock)
 
@@ -39,7 +42,9 @@ class TaskQueue:
             heapq.heappush(self._tasks, task)
             self._condition.notify_all()
 
-    def dequeue(self, worker_type: Optional[str] = None, timeout: Optional[float] = None) -> Optional[Task]:
+    def dequeue(
+        self, worker_type: str | None = None, timeout: float | None = None
+    ) -> Task | None:
         """
         Pop the highest priority available task from the queue.
         If worker_type is specified, pop the highest priority task matching that worker_type.
@@ -52,7 +57,7 @@ class TaskQueue:
                 now = time.time()
                 # Find the best task matching the worker_type and is currently active
                 task_index = self._find_available_matching_task_index(worker_type, now)
-                
+
                 if task_index is not None:
                     # Remove item and re-heapify
                     if task_index == 0:
@@ -65,15 +70,19 @@ class TaskQueue:
                 # No currently available matching task. Calculate how long to block.
                 # Check if there are future delayed matching tasks.
                 next_wakeup_delay = self._get_next_wakeup_delay(worker_type, now)
-                
+
                 # Determine how long we can afford to wait on the condition lock
-                wait_time: Optional[float] = None
+                wait_time: float | None = None
                 if timeout is not None:
                     elapsed = time.time() - start_time
                     remaining = timeout - elapsed
                     if remaining <= 0:
                         return None
-                    wait_time = min(remaining, next_wakeup_delay) if next_wakeup_delay is not None else remaining
+                    wait_time = (
+                        min(remaining, next_wakeup_delay)
+                        if next_wakeup_delay is not None
+                        else remaining
+                    )
                 else:
                     wait_time = next_wakeup_delay
 
@@ -83,12 +92,14 @@ class TaskQueue:
                     self._condition.wait(wait_time)
                 else:
                     self._condition.wait()
-                    
+
                 # If we have a timeout and we've exceeded it, check one last time, else return None
                 if timeout is not None and (time.time() - start_time) >= timeout:
                     # Final check before giving up
                     now = time.time()
-                    task_index = self._find_available_matching_task_index(worker_type, now)
+                    task_index = self._find_available_matching_task_index(
+                        worker_type, now
+                    )
                     if task_index is not None:
                         if task_index == 0:
                             return heapq.heappop(self._tasks)
@@ -98,15 +109,19 @@ class TaskQueue:
                             return task
                     return None
 
-    def _find_available_matching_task_index(self, worker_type: Optional[str], current_time: float) -> Optional[int]:
+    def _find_available_matching_task_index(
+        self, worker_type: str | None, current_time: float
+    ) -> int | None:
         """Find the index of the highest priority task matching worker_type that is currently active."""
         if not self._tasks:
             return None
 
         # Gather all active matching tasks
         matching_indices = [
-            i for i, t in enumerate(self._tasks) 
-            if (worker_type is None or t.worker_type == worker_type) and t.available_at <= current_time
+            i
+            for i, t in enumerate(self._tasks)
+            if (worker_type is None or t.worker_type == worker_type)
+            and t.available_at <= current_time
         ]
         if not matching_indices:
             return None
@@ -118,11 +133,15 @@ class TaskQueue:
                 best_index = idx
         return best_index
 
-    def _get_next_wakeup_delay(self, worker_type: Optional[str], current_time: float) -> Optional[float]:
+    def _get_next_wakeup_delay(
+        self, worker_type: str | None, current_time: float
+    ) -> float | None:
         """Get the time in seconds until the next delayed matching task becomes available."""
         delayed_tasks = [
-            t.available_at for t in self._tasks 
-            if (worker_type is None or t.worker_type == worker_type) and t.available_at > current_time
+            t.available_at
+            for t in self._tasks
+            if (worker_type is None or t.worker_type == worker_type)
+            and t.available_at > current_time
         ]
         if not delayed_tasks:
             return None
@@ -132,6 +151,10 @@ class TaskQueue:
         """Return total number of tasks in the queue (including delayed ones)."""
         with self._lock:
             return len(self._tasks)
+
+    def qsize(self) -> int:
+        """Compatibility with the standard queue size interface."""
+        return self.size()
 
     def clear(self) -> None:
         """Clear the queue."""
