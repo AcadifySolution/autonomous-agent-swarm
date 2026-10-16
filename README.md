@@ -1,4 +1,4 @@
-# Autonomous Agent Swarm
+# Autonomous Agent Swarm — Python AI Agent Orchestration
 
 > Event-driven orchestration primitives for coordinating specialized AI workers with queues, DAG workflows, persistent state, evaluation, human approval, and crash recovery.
 
@@ -8,22 +8,31 @@
 [![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC.svg)](tests/)
 [![CodeQL](https://github.com/AcadifySolution/autonomous-agent-swarm/actions/workflows/codeql.yml/badge.svg)](https://github.com/AcadifySolution/autonomous-agent-swarm/actions/workflows/codeql.yml)
 
+## Choose a starting point
+
+Explore event-driven task execution, DAG dependencies, SQLite state, and human
+approval gates through the [example workflow](examples/demo_swarm.py),
+[architecture guide](docs/architecture.md), and [regression tests](tests/).
+Start with sample tasks before connecting tools that act on external systems.
+
+For a browser-based planning demonstration, explore [Aegis MVP Launchpad](https://github.com/AcadifySolution/aegis-mvp-launchpad).
+
 ## What is included
 
-| Capability | Implementation |
-| --- | --- |
-| Agent runtime | Threaded worker lifecycle, heartbeats, bounded retries |
-| Messaging | Thread-safe publish/subscribe event broker |
-| Queueing | Priority queue with worker-role routing |
-| State | SQLite-backed task, agent, and evaluation persistence |
-| Workflows | DAG dependencies with cycle detection and cascade handling |
-| Human control | Approval/rejection gates for gated tasks |
-| Recovery | Watchdog detection and orphaned-task recovery |
-| Output safety | JSON extraction and Pydantic validation |
-| Evaluation | Latency and output/schema compliance metrics |
-| Framework adapters | CrewAI, LangChain, and LlamaIndex wrappers |
-| Guardrails | Retry, payload, task-size, priority, and workflow bounds |
-| Auditability | Correlation-aware structured audit events |
+| Capability         | Implementation                                             |
+| ------------------ | ---------------------------------------------------------- |
+| Agent runtime      | Threaded worker lifecycle, heartbeats, bounded retries     |
+| Messaging          | Thread-safe publish/subscribe event broker                 |
+| Queueing           | Priority queue with worker-role routing                    |
+| State              | SQLite-backed task, agent, and evaluation persistence      |
+| Workflows          | DAG dependencies with cycle detection and cascade handling |
+| Human control      | Approval/rejection gates for gated tasks                   |
+| Recovery           | Watchdog detection and orphaned-task recovery              |
+| Output safety      | JSON extraction and Pydantic validation                    |
+| Evaluation         | Latency and output/schema compliance metrics               |
+| Framework adapters | CrewAI, LangChain, and LlamaIndex wrappers                 |
+| Guardrails         | Retry, payload, task-size, priority, and workflow bounds   |
+| Auditability       | Correlation-aware structured audit events                  |
 
 ## Architecture
 
@@ -125,14 +134,14 @@ The example uses mock-style execution paths and does not require production mode
 
 Autonomous execution needs hard boundaries. The repository publishes explicit defaults in `swarm/core/limits.py`:
 
-| Guardrail | Default |
-| --- | ---: |
-| Max retries | 5 |
-| Max task description | 20,000 chars |
-| Max serialized payload | 1 MB |
-| Max workflow steps | 100 |
-| Max priority | 100 |
-| Recommended worker concurrency ceiling | 32 |
+| Guardrail                              |      Default |
+| -------------------------------------- | -----------: |
+| Max retries                            |            5 |
+| Max task description                   | 20,000 chars |
+| Max serialized payload                 |         1 MB |
+| Max workflow steps                     |          100 |
+| Max priority                           |          100 |
+| Recommended worker concurrency ceiling |           32 |
 
 See [RUNTIME_GUARDRAILS.md](RUNTIME_GUARDRAILS.md).
 
